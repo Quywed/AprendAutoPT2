@@ -1,0 +1,2 @@
+model_name,best_params,val_accuracy,inf_time
+KNN,"{'n_neighbors': 3, 'weights': 'uniform'}",0.9997385620915032,0.0038733673095703125
