@@ -44,23 +44,28 @@ class SignLanguageClient:
             if not success:
                 break
             
-            frame_count += 1
+            # 1. 
+            image = cv2.flip(image, 1)
             
-            # Processar apenas 1 em cada 5 frames para a IA
-            if frame_count % 5 == 0 and not self.processing:
-                # Extrai os dados da imagem
-                hands_data = self.extractor.process_image_landmarks(image)
+            # 2. Extrair landmarks em TODOS os frames para desenho fluido
+            # Chamamos o extrator aqui para que hands_data exista sempre que houver uma mão
+            hands_data = self.extractor.process_image_landmarks(image)
+            
+            if hands_data:
+                # 3. Desenhar os landmarks no frame atual (Executado a 30 FPS)
+                image = self.extractor.draw_landmarks(image, hands_data)
                 
-                if hands_data:
-                    # Converte para DataFrame e depois para dicionário para envio JSON
+                # 4. Enviar para a IA apenas a cada 5 frames para poupar recursos
+                if not self.processing:
+                    # Converte para dicionário para envio JSON
                     df_hand = self.extractor.hands_data_to_dataframe([hands_data[0]])
                     payload = df_hand.iloc[0].to_dict()
                     
-                    # Inicia a thread passando o payload como argumento
+                    # Inicia a thread de previsão
                     thread = threading.Thread(target=self.get_prediction, args=(payload,))
                     thread.start()
             
-            # Desenhar o resultado
+            # 5. Desenhar o HUD de resultado (mantém a última previsão guardada)
             text = f"Letra: {self.last_prediction} ({self.last_confidence:.2%})"
             cv2.rectangle(image, (5, 15), (350, 60), (0, 0, 0), -1)
             cv2.putText(image, text, (10, 50), cv2.FONT_HERSHEY_SIMPLEX, 
