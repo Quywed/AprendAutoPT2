@@ -10,13 +10,13 @@ CORS(app)
 # 1. Carregar o modelo, o Label Encoder e (se necessário) o Scaler
 # Se o seu 'melhor_modelo.pkl' for um Pipeline do sklearn, o scaler já está lá dentro.
 MODEL_PATH = 'melhor_modelo.pkl'
-LABEL_ENCODER_PATH = 'label_encoder.pkl'
+LABEL_ENCODER_PATH = 'label_map.pkl'
 
 with open(MODEL_PATH, 'rb') as f:
     model = pickle.load(f)
 
 with open(LABEL_ENCODER_PATH, 'rb') as f:
-    le = pickle.load(f)
+    inv_label_map = pickle.load(f)
 
 def preprocess_for_inference(data_dict):
     """
@@ -66,34 +66,19 @@ def predict():
         # 1. Pré-processamento
         X_processed = preprocess_for_inference(data)
         
-        # 2. Previsão
-        # Se o modelo for um Pipeline, ele aplica o StandardScaler automaticamente
-        prediction_encoded = model.predict(X_processed)[0]
+        # 1. O modelo prevê um número (ex: 0)
+        prediction_idx = model.predict(X_processed)[0]
         
-        # 3. Descodificar a letra (de número para 'A', 'B', etc.)
-        letter = le.inverse_transform([prediction_encoded])[0]
+        # 2. Usar o dicionário para obter a letra correspondente (ex: 'A')
+        letter = inv_label_map[prediction_idx]
         
-        # 4. Probabilidades para confiança
-        probabilities = model.predict_proba(X_processed)[0]
-        confidence = float(np.max(probabilities))
-        
-        # 5. Resposta incluindo landmarks (conforme o to-do.txt)
         return jsonify({
             'letter': str(letter),
-            'confidence': confidence,
-            'landmarks_received': data  # Retorna os dados originais para conferência
+            'confidence': float(np.max(model.predict_proba(X_processed)[0]))
         })
-        
+            
     except Exception as e:
         return jsonify({'error': str(e)}), 500
-
-@app.route('/health', methods=['GET'])
-def health():
-    return jsonify({
-        'status': 'ok', 
-        'model_loaded': model is not None,
-        'label_encoder_loaded': le is not None
-    })
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5000)
