@@ -11,7 +11,7 @@ with open('melhor_modelo.pkl', 'rb') as f:
     model = checkpoint['model']
     inv_label_map = checkpoint['inv_label_map']
 
-def pre_processamento(data_dict):
+def pre_processamento(data_dict): # Mesmo pré-processamento que usado no notebook
     df = pd.DataFrame([data_dict])
     
     x_cols = [c for c in df.columns if c.endswith("_x")]
