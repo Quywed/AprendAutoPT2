@@ -1,83 +1,96 @@
 import cv2
 import requests
-import json
 from hand_landmark_extractor import HandLandmarkExtractor
-import time
 import threading
+import numpy as np
 
 class SignLanguageClient:
     def __init__(self, api_url="http://localhost:5000/predict"):
         self.api_url = api_url
-        # Usar static_image_mode=False para melhor performance em vídeo
         self.extractor = HandLandmarkExtractor(static_image_mode=False, max_num_hands=1)
-        self.last_prediction = "A aguardar..."
+        
+        self.session = requests.Session()
+        
+        self.last_prediction = "A esperar mao/API..."
         self.last_confidence = 0.0
         self.processing = False
 
-    def get_prediction(self, payload): # Corrigido: o nome do parâmetro deve ser payload
-        """Função para ser executada numa thread separada para não bloquear o vídeo."""
+    def get_prediction(self, payload):
         self.processing = True
         try:
-            response = requests.post(
-                self.api_url, 
-                json=payload, # Agora a variável payload está definida como o argumento da função
-                timeout=0.5
-            )
+            # self.session.post é mais rápido que requests.post
+            response = self.session.post(self.api_url, json=payload, timeout=0.4)
             if response.status_code == 200:
                 result = response.json()
                 self.last_prediction = result['letter']
                 self.last_confidence = result['confidence']
-        except Exception as e:
-            # Opcional: print(f"Erro na API: {e}")
+        except:
             pass
         self.processing = False
 
     def run(self):
         cap = cv2.VideoCapture(0)
-        cap.set(cv2.CAP_PROP_FPS, 30)
+        cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
+        cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+        # Tentar aumentar o FPS da captura
+        cap.set(cv2.CAP_PROP_FPS, 60)
         
-        print("Iniciando captura otimizada... Pressione 'q' para sair.")
+        print("A iniciar cliente ... Clique 'q' para sair.")
         
-        frame_count = 0
         while cap.isOpened():
             success, image = cap.read()
-            if not success:
-                break
+            if not success: break
             
-            # 1. 
             image = cv2.flip(image, 1)
+            h, w, _ = image.shape
             
-            # 2. Extrair landmarks em TODOS os frames para desenho fluido
-            # Chamamos o extrator aqui para que hands_data exista sempre que houver uma mão
             hands_data = self.extractor.process_image_landmarks(image)
             
             if hands_data:
-                # 3. Desenhar os landmarks no frame atual (Executado a 30 FPS)
+                # Desenhar landmarks
                 image = self.extractor.draw_landmarks(image, hands_data)
+
+                # Zoom Tracking
+                landmarks_px = np.array([[lm['x'] * w, lm['y'] * h] for lm in hands_data[0]['landmarks']])
+                x_min, y_min = np.min(landmarks_px, axis=0)
+                x_max, y_max = np.max(landmarks_px, axis=0)
                 
-                # 4. Enviar para a IA apenas a cada 5 frames para poupar recursos
+                margin = 40
+                x1, y1 = max(0, int(x_min - margin)), max(0, int(y_min - margin))
+                x2, y2 = min(w, int(x_max + margin)), min(h, int(y_max + margin))
+                
+                if x2 > x1 and y2 > y1:
+                    hand_crop = image[y1:y2, x1:x2].copy()
+                    zoom_size = 160 
+                    hand_zoom = cv2.resize(hand_crop, (zoom_size, zoom_size))
+                    image[10:10+zoom_size, w-zoom_size-10:w-10] = hand_zoom
+                    cv2.rectangle(image, (w-zoom_size-10, 10), (w-10, 10+zoom_size), (255, 255, 255), 2)
+
+                # Criar payload manualmente
                 if not self.processing:
-                    # Converte para dicionário para envio JSON
-                    df_hand = self.extractor.hands_data_to_dataframe([hands_data[0]])
-                    payload = df_hand.iloc[0].to_dict()
+                    hand = hands_data[0]
+                    norm_lms = hand['landmarks_normalized']
+
+                    payload = {'hand': hand['handedness']}
+                    for i, name in enumerate(self.extractor.landmark_names):
+                        payload[f"{name}_x"] = float(norm_lms[i, 0])
+                        payload[f"{name}_y"] = float(norm_lms[i, 1])
+                        payload[f"{name}_z"] = float(norm_lms[i, 2])
                     
-                    # Inicia a thread de previsão
-                    thread = threading.Thread(target=self.get_prediction, args=(payload,))
+                    thread = threading.Thread(target=self.get_prediction, args=(payload,), daemon=True)
                     thread.start()
             
-            # 5. Desenhar o HUD de resultado (mantém a última previsão guardada)
-            text = f"Letra: {self.last_prediction} ({self.last_confidence:.2%})"
-            cv2.rectangle(image, (5, 15), (350, 60), (0, 0, 0), -1)
-            cv2.putText(image, text, (10, 50), cv2.FONT_HERSHEY_SIMPLEX, 
-                        1, (0, 255, 0), 2, cv2.LINE_AA)
+            # Interface de utilizador
+            text = f"{self.last_prediction} (Confianca: {self.last_confidence:.0%})"
+            cv2.rectangle(image, (5, 15), (280, 65), (0, 0, 0), -1)
+            cv2.putText(image, text, (15, 50), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
             
-            cv2.imshow('Detecao de Lingua Gestual (Otimizada)', image)
-            
-            if cv2.waitKey(1) & 0xFF == ord('q'):
-                break
+            cv2.imshow('Fast Sign Language Detection', image)
+            if cv2.waitKey(1) & 0xFF == ord('q'): break
                 
         cap.release()
         cv2.destroyAllWindows()
+        self.extractor.close()
 
 if __name__ == "__main__":
     client = SignLanguageClient()
